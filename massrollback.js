@@ -232,6 +232,8 @@ mw.loader.using(["mediawiki.util", "jquery"]).then(() => {
             e.preventDefault();
             const url = new URL(window.location.href);
             url.searchParams.set("limit", "5000");
+            url.searchParams.set("topOnly", "1");
+
             window.location.href = url.toString();
         });
 
@@ -257,6 +259,8 @@ mw.loader.using(["mediawiki.util", "jquery"]).then(() => {
 
                 const url = new URL(window.location.href);
                 url.searchParams.set("limit", perPage);
+                url.searchParams.set("topOnly", "1");
+
                 window.location.href = url.toString();
             });
         }
