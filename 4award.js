@@ -258,25 +258,25 @@
         };
     }
 
-    async function getExistingRecordCount(articleTitle) {
-        var text = await getPageWikitext(RECORDS_PAGE);
-        var titleObj = mw.Title.newFromText(articleTitle);
-        var base = titleObj ? titleObj.getMainText() : articleTitle;
-        var regex = new RegExp("\\[\\[" + escapeRegExp(base) + "(?:\\||\\]\\])", 'gi');
-        var matches = text.match(regex);
-        return matches ? matches.length : 0;
-    }
+    async function getExistingRecordCount(username) {
+    var text = await getPageWikitext(RECORDS_PAGE);
+    var regex = new RegExp("\\[\\[User:" + escapeRegExp(username) + "(?:\\||\\]\\])", 'gi');
+    var matches = text.match(regex);
+    return matches ? matches.length : 0;
+}
+    
 
     function ctbBuildRecordRow(data) {
-        var articleDisplay = '[[' + data.article + ']]' + (data.previous4As > 0 ? ' (' + (data.previous4As + 1) + ')' : '');
+    	var userLabel = '[[' + 'User:' + data.nominator + '|' + data.nominator + ']]' + (data.previous4As > 0 ? ' (' + (data.previous4As + 1) + ')' : '');
+    	var articleDisplay = '[[' + data.article + ']]';
         return '|-\n' +
-            '| ' + data.nominator + '\n' +
-            '| ' + articleDisplay + '\n' +
-            '| ' + data.creationDate + '\n' +
-            '| ' + data.dykDate + '\n' +
-            '| ' + data.gaDate + '\n' +
-            '| ' + data.faDate + '\n' +
-            '| ' + data.awardDate + '\n';
+		 '| ' + userLabel + '\n' +
+		 '| ' + articleDisplay + '\n' +
+		 '| ' + data.awardDate + '\n' +
+		 '| ' + data.creationDate + '\n' +
+		 '| ' + data.dykDate + '\n' +
+		 '| ' + data.gaDate + '\n' +
+		 '| ' + data.faDate + '\n';
     }
 
     function appendToTable(text, rowText) {
@@ -349,15 +349,7 @@
         showMessage(statusBox, 'Processing approved nomination…', 'info');
 
         var talkSectionTitle = 'Four Award for ' + data.article;
-        var talkText = `
-{| style="border: 1px solid gray; background-color: #fdffe7;"
-|rowspan="2" style="vertical-align:middle;" | 
-[[File:Four Award with draft icon.svg|100px]]
-|rowspan="2" |
-|style="font-size: x-large; padding: 0; vertical-align: middle; height: 1.1em;" | '''Four Award'''
-|-
-|style="vertical-align: middle; border-top: 1px solid gray;" | Congratulations! You have been awarded the [[Wikipedia:Four Award|Four Award]] for your work from beginning to end on '''[[' + data.article + ']]'''. <span style="font-family:Courier">All the Best</span> -- [[User:Alachuckthebuck|<b style="color: #605252">Chuck</b>]] <b><sup>[[User_talk:Alachuckthebuck|<span style="color: #8c593a; font-family: Tahoma">Talk</span>]]</sup></b> 19:23, 30 March 2026 (UTC)  
-|}'; `
+        var talkText = '{{subst:Four Award Message|' + data.article + '}}';
 
         if (data.customMessage.trim()) {
             talkText += '\n\n' + data.customMessage.trim();
@@ -445,13 +437,12 @@
 
     async function openDialogForNomination(nomination) {
         var parsed = ctbParseNominationText(nomination.text);
-       if (
-    parsed.nominator === username &&
-    noms[i].text.includes('Article:')
-){
-            mw.notify('Could not parse nomination header and/or article line.', { type: 'error' });
-            return;
-        }
+       if (parsed.nominator === username && parsed.article === articleFromDOM) {
+       	mw.notify('Could not parse nomination header and/or article line.', { type: 'error' });
+       	return;
+       	
+       }
+
 
         var $status = $('<div>');
         var $body = $('<div>');
@@ -542,7 +533,7 @@
                     linkNode(mw.util.getUrl(history.talkTitle), history.talkTitle)
                 );
 
-                var count = await getExistingRecordCount(article);
+                var count = await getExistingRecordCount(parsed.nominator);
                 $previous4As.val(String(count));
             } catch (e) {
                 $articleHistoryNotice.text(String(e.message || e));
@@ -623,6 +614,11 @@
             }
 
             var username = $userLink.text().trim();
+            var $articleLink = $p.nextAll('p').find('a').filter(function () {
+    return !$(this).attr('href').includes('User:') &&
+           !$(this).attr('href').includes('Talk:') &&
+           !$(this).attr('href').includes('Special:');}).first();
+           var articleFromDOM = $articleLink.text().trim();
 
             var $link = $('<a>')
                 .attr('href', '#')
@@ -640,7 +636,7 @@
 
                     for (var i = 0; i < noms.length; i++) {
                         var parsed = ctbParseNominationText(noms[i].text);
-                        if (parsed.nominator === username) {
+                        if (parsed.nominator === username &&parsed.article === articleFromDOM) {
                             targetNom = noms[i];
                             break;
                         }
