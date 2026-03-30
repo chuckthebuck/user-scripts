@@ -125,7 +125,7 @@
         return meta;
     }
 
-    function extractNominationsFromSection(wikitext) {
+    function CTBextractNominationsFromSection(wikitext) {
         var lines = wikitext.split(/\r?\n/);
         var inSection = false;
         var headingRegex = /^==+\s*(.*?)\s*==+\s*$/;
@@ -167,7 +167,7 @@
                 continue;
             }
 
-            if (/^====\s*\{\{user\|/i.test(line)) {
+            if (/^====\s*\{\{\s*user\s*\|/i.test(line)){
                 flush(i);
                 currentStart = i;
             }
@@ -183,9 +183,9 @@
         return nominations;
     }
 
-    function parseNominationText(text) {
-        var nominatorMatch = text.match(/^====\s*\{\{user\|([^}|]+).*?\}\}\s*====/im);
-        var articleMatch = text.match(/^\s*Article:\s*'''\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/im);
+    function ctbParseNominationText(text) {
+        var nominatorMatch = text.match(/^====\s*\{\{\s*user\s*\|\s*([^}|]+).*?\}\}\s*====/im);
+        var articleMatch = text.match(/Article:\s*'''?\[\[([^\]|]+)\]\]/i);
 
         return {
             nominator: nominatorMatch ? nominatorMatch[1].trim() : '',
@@ -267,7 +267,7 @@
         return matches ? matches.length : 0;
     }
 
-    function buildRecordRow(data) {
+    function ctbBuildRecordRow(data) {
         var articleDisplay = '[[' + data.article + ']]' + (data.previous4As > 0 ? ' (' + (data.previous4As + 1) + ')' : '');
         return '|-\n' +
             '| ' + data.nominator + '\n' +
@@ -349,7 +349,16 @@
         showMessage(statusBox, 'Processing approved nomination…', 'info');
 
         var talkSectionTitle = 'Four Award for ' + data.article;
-        var talkText = '{{subst:Four Award Message|' + data.article + '}}';
+        var talkText = `
+{| style="border: 1px solid gray; background-color: #fdffe7;"
+|rowspan="2" style="vertical-align:middle;" | 
+[[File:Four Award with draft icon.svg|100px]]
+|rowspan="2" |
+|style="font-size: x-large; padding: 0; vertical-align: middle; height: 1.1em;" | '''Four Award'''
+|-
+|style="vertical-align: middle; border-top: 1px solid gray;" | Congratulations! You have been awarded the [[Wikipedia:Four Award|Four Award]] for your work from beginning to end on '''[[' + data.article + ']]'''. <span style="font-family:Courier">All the Best</span> -- [[User:Alachuckthebuck|<b style="color: #605252">Chuck</b>]] <b><sup>[[User_talk:Alachuckthebuck|<span style="color: #8c593a; font-family: Tahoma">Talk</span>]]</sup></b> 19:23, 30 March 2026 (UTC)  
+|}'; `
+
         if (data.customMessage.trim()) {
             talkText += '\n\n' + data.customMessage.trim();
         }
@@ -362,7 +371,7 @@
         );
 
         var recordsMeta = await getPageRevisionMeta(RECORDS_PAGE);
-        var newRow = buildRecordRow(data);
+        var newRow = ctbBuildRecordRow(data);
         var updatedRecords = appendToTable(recordsMeta.content, newRow);
         await editPage(
             RECORDS_PAGE,
@@ -435,8 +444,11 @@
     }
 
     async function openDialogForNomination(nomination) {
-        var parsed = parseNominationText(nomination.text);
-        if (!parsed.nominator || !parsed.article) {
+        var parsed = ctbParseNominationText(nomination.text);
+       if (
+    parsed.nominator === username &&
+    noms[i].text.includes('Article:')
+){
             mw.notify('Could not parse nomination header and/or article line.', { type: 'error' });
             return;
         }
@@ -592,52 +604,59 @@
         preload();
     }
 
-    function addLinksToRenderedNominations() {
-        var nominations = extractNominationsFromSection($('#mw-content-text .mw-parser-output').text());
-        void nominations;
-
+   function addLinksToRenderedNominations() {
         var $content = $('#mw-content-text .mw-parser-output');
-        var $headings = $content.find('h4');
-        if (!$headings.length) {
-            return;
-        }
 
-        $headings.each(function () {
-            var $heading = $(this);
-            var text = $heading.text().trim();
-            var match = text.match(/^(.+)$/);
-            if (!match || !$heading.find('.four-award-helper-link').length) {
-                var $link = $('<a>')
-                    .attr('href', '#')
-                    .addClass('four-award-helper-link')
-                    .css({ marginLeft: '0.5em', fontSize: '0.9em' })
-                    .text('[4A helper]');
+        // Find nomination headers (user links in bold at start of each nom)
+        $content.find('p > b > a').each(function () {
+            var $userLink = $(this);
+            var href = $userLink.attr('href') || '';
+            var $p = $userLink.closest('p');
+            var paragraphText = $p.text(); // Only use the nomination header line, not article/talk/history links
+            if (!/\/wiki\/User:/i.test(href) || !/\(talk\s*·\s*contribs\)/i.test(paragraphText)) {
+                    return;
+            	  }
 
-                $link.on('click', async function (e) {
-                    e.preventDefault();
-                    try {
-                        var fullText = await getPageWikitext(MAIN_PAGE);
-                        var noms = extractNominationsFromSection(fullText);
-                        var targetNom = null;
-                        for (var i = 0; i < noms.length; i++) {
-                            var parsed = parseNominationText(noms[i].text);
-                            var renderedUser = text.replace(/^=+|=+$/g, '').trim();
-                            if (renderedUser.indexOf(parsed.nominator) !== -1 || text.indexOf(parsed.nominator) !== -1) {
-                                targetNom = noms[i];
-                                break;
-                            }
-                        }
-                        if (!targetNom) {
-                            throw new Error('Could not match this rendered nomination to source wikitext.');
-                        }
-                        await openDialogForNomination(targetNom);
-                    } catch (err) {
-                        mw.notify(String(err.message || err), { type: 'error' });
-                    }
-                });
-
-                $heading.append($link);
+            // Avoid adding twice
+            if ($userLink.next('.four-award-helper-link').length) {
+                return;
             }
+
+            var username = $userLink.text().trim();
+
+            var $link = $('<a>')
+                .attr('href', '#')
+                .addClass('four-award-helper-link')
+                .css({ marginLeft: '0.5em', fontSize: '0.9em' })
+                .text('[4A helper]');
+
+            $link.on('click', async function (e) {
+                e.preventDefault();
+                try {
+                    var fullText = await getPageWikitext(MAIN_PAGE);
+                    var noms = CTBextractNominationsFromSection(fullText);
+
+                    var targetNom = null;
+
+                    for (var i = 0; i < noms.length; i++) {
+                        var parsed = ctbParseNominationText(noms[i].text);
+                        if (parsed.nominator === username) {
+                            targetNom = noms[i];
+                            break;
+                        }
+                    }
+
+                    if (!targetNom) {
+                        throw new Error('Could not match this nomination to source wikitext.');
+                    }
+
+                    await openDialogForNomination(targetNom);
+                } catch (err) {
+                    mw.notify(String(err.message || err), { type: 'error' });
+                }
+            });
+
+            $userLink.after($link);
         });
     }
 
