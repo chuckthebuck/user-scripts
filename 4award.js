@@ -9,7 +9,6 @@
  *
  
  */
-
 (function () {
     'use strict';
 
@@ -349,7 +348,7 @@
         showMessage(statusBox, 'Processing approved nomination…', 'info');
 
         var talkSectionTitle = 'Four Award for ' + data.article;
-        var talkText = '{{subst:Four Award Message|' + data.article + '}}';
+        var talkText = '{{' + 'subst:Four Award Message|' + data.article + '}}';
 
         if (data.customMessage.trim()) {
             talkText += '\n\n' + data.customMessage.trim();
@@ -437,9 +436,10 @@
 
     async function openDialogForNomination(nomination) {
         var parsed = ctbParseNominationText(nomination.text);
-       if (parsed.nominator === username && parsed.article === articleFromDOM) {
-       	mw.notify('Could not parse nomination header and/or article line.', { type: 'error' });
-       	return;
+       if (!parsed.nominator || !parsed.article) { mw.notify('Could not parse nomination header and/or article line.', { type: 'error' });
+       return;
+       	
+       
        	
        }
 
