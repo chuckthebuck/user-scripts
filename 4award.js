@@ -9,6 +9,15 @@
  *
  
  */
+
+function normalizeUser(u) {
+    return (u || '')
+        .replace(/_/g, ' ')
+        .replace(/\u00a0/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLowerCase();
+}
 (function () {
     'use strict';
 
@@ -16,7 +25,7 @@
         return;
     }
 
-    var NOM_SECTION_HEADING = 'Nominations';
+    var NOM_SECTION_HEADING = 'Current nominations';
     var RECORDS_PAGE = 'Wikipedia:Four Award/Records';
     var MAIN_PAGE = 'Wikipedia:Four Award';
     var API = new mw.Api();
@@ -36,7 +45,15 @@
         }
         return title.getTalkPage().getPrefixedText();
     }
-
+    function makeInput(label, id, value) {
+    return `
+        <label class="cdx-label">${label}</label>
+        <div class="cdx-text-input">
+            <input id="${id}" class="cdx-text-input__input" value="${value || ''}">
+        </div>
+    `;
+    	
+    }
     function userTalkTitle(username) {
         return 'User talk:' + username.replace(/^User:/i, '').trim();
     }
@@ -49,13 +66,23 @@
         return y + '-' + m + '-' + day;
     }
 
-    function dateFromMwTimestamp(ts) {
-        if (!ts || ts.length < 8) {
-            return '';
-        }
+function dateFromMwTimestamp(ts) {
+    if (!ts) {
+        return '';
+    }
+
+    // ISO timestamp like 2024-05-07T12:34:56Z
+    if (/^\d{4}-\d{2}-\d{2}T/.test(ts)) {
+        return ts.slice(0, 10);
+    }
+
+    // MW compact timestamp like 20240507123456
+    if (/^\d{8,}$/.test(ts)) {
         return ts.slice(0, 4) + '-' + ts.slice(4, 6) + '-' + ts.slice(6, 8);
     }
 
+    return '';
+}
     function linkNode(href, text) {
         return $('<a>').attr('href', href).attr('target', '_blank').text(text);
     }
@@ -124,75 +151,68 @@
         return meta;
     }
 
-    function CTBextractNominationsFromSection(wikitext) {
-        var lines = wikitext.split(/\r?\n/);
-        var inSection = false;
-        var headingRegex = /^==+\s*(.*?)\s*==+\s*$/;
-        var buffer = [];
-        var nominations = [];
-        var currentStart = -1;
+function CTBextractNominationsFromSection(wikitext) {
+    const lines = wikitext.split(/\r?\n/);
 
-        function flush(endLineExclusive) {
-            if (!buffer.length) {
-                return;
-            }
-            var text = buffer.join('\n').trim();
-            if (text) {
-                nominations.push({
-                    text: text,
-                    startLine: currentStart,
-                    endLine: endLineExclusive - 1
-                });
-            }
-            buffer = [];
-            currentStart = -1;
+    let inSection = false;
+    let buffer = [];
+    const nominations = [];
+
+    function flush() {
+        const text = buffer.join('\n').trim();
+        if (text) {
+            nominations.push(text);
         }
-
-        for (var i = 0; i < lines.length; i++) {
-            var line = lines[i];
-            var headingMatch = line.match(headingRegex);
-            if (headingMatch) {
-                var headingText = headingMatch[1].trim();
-                if (inSection) {
-                    flush(i);
-                    break;
-                }
-                if (headingText === NOM_SECTION_HEADING) {
-                    inSection = true;
-                }
-                continue;
-            }
-            if (!inSection) {
-                continue;
-            }
-
-            if (/^====\s*\{\{\s*user\s*\|/i.test(line)){
-                flush(i);
-                currentStart = i;
-            }
-            if (currentStart !== -1) {
-                buffer.push(line);
-            }
-        }
-
-        if (inSection) {
-            flush(lines.length);
-        }
-
-        return nominations;
+        buffer = [];
     }
 
-    function ctbParseNominationText(text) {
-        var nominatorMatch = text.match(/^====\s*\{\{\s*user\s*\|\s*([^}|]+).*?\}\}\s*====/im);
-        var articleMatch = text.match(/Article:\s*'''?\[\[([^\]|]+)\]\]/i);
+    for (const line of lines) {
+        // Start at the level-2 "Current nominations" heading
+        if (!inSection) {
+            if (/^==\s*Current nominations\s*==\s*$/i.test(line)) {
+                inSection = true;
+            }
+            continue;
+        }
 
-        return {
-            nominator: nominatorMatch ? nominatorMatch[1].trim() : '',
-            article: articleMatch ? articleMatch[1].trim() : '',
-            rawText: text
-        };
+        // New nomination starts at a level-4 heading
+        if (/^====/.test(line)) {
+            flush();
+            buffer = [line];
+            continue;
+        }
+
+        // End only at the NEXT level-2 heading, not h3/h4
+        if (/^==\s*[^=].*==\s*$/.test(line)) {
+            break;
+        }
+
+        // Ignore text before first nomination
+        if (!buffer.length) {
+            continue;
+        }
+
+        buffer.push(line);
     }
 
+    flush();
+    return nominations;
+}
+function ctbParseNominationText(text) {
+    text = text || '';
+
+    const nominatorMatch =
+        text.match(/\{\{\s*user\s*\|\s*(?:1=)?\s*([^|}\n]+)\s*/i) ||
+        text.match(/\[\[\s*User:([^|\]]+)/i);
+
+    const articleMatch = text.match(/^\s*Article:\s*'''?\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/im);
+
+    return {
+        nominator: nominatorMatch ? nominatorMatch[1].trim() : '',
+        article: articleMatch ? normalizeTitle(articleMatch[1].trim()) : '',
+        rawText: text
+    };
+}
     async function getOldestNonRedirectRevision(articleTitle) {
         var title = normalizeTitle(articleTitle);
         var data = await API.get({
@@ -433,240 +453,229 @@
 
         showMessage(statusBox, 'Done. Declined workflow completed successfully.', 'success');
     }
+async function openDialogForNomination(nominationText, $header) {
+    var parsed = ctbParseNominationText(nominationText);
 
-    async function openDialogForNomination(nomination) {
-        var parsed = ctbParseNominationText(nomination.text);
-       if (!parsed.nominator || !parsed.article) { mw.notify('Could not parse nomination header and/or article line.', { type: 'error' });
-       return;
-       	
-       
-       	
-       }
-
-
-        var $status = $('<div>');
-        var $body = $('<div>');
-
-        var $mode = $('<select>')
-            .append($('<option>').val('approved').text('Approved'))
-            .append($('<option>').val('declined').text('Declined'));
-
-        var $nominator = makeTextInput(parsed.nominator);
-        var $article = makeTextInput(parsed.article);
-        var $awardDate = makeTextInput(currentDateYMD());
-        var $creationDate = makeTextInput('');
-        var $dykDate = makeTextInput('');
-        var $gaDate = makeTextInput('');
-        var $faDate = makeTextInput('');
-        var $previous4As = makeTextInput('0');
-        var $customMessage = makeTextarea('');
-        var $declineReason = makeTextarea('');
-        var $creationHelp = $('<span>').text('Needs manual verification because of possible creation-from-redirect.');
-        var $creationDiffHolder = $('<span>');
-        var $articleHistoryNotice = $('<div>').css({ marginBottom: '10px', padding: '8px', background: '#f8f9fa', border: '1px solid #ccc' });
-        var $requirementsNote = $('<div>').css({ marginBottom: '10px', padding: '8px', background: '#fffbe6', border: '1px solid #ccc' })
-            .text('Reminder: the script does not verify whether the editor qualifies for the Four Award. The human user must verify that before proceeding.');
-
-        var ui = {
-            statusBox: $status
-        };
-
-        var $approvedFields = $('<div>');
-        var $declinedFields = $('<div>');
-
-        $approvedFields.append(
-            makeField('Award date', $awardDate),
-            makeField('Article creation date', $creationDate, $('<span>').append($creationHelp, ' ', $creationDiffHolder)),
-            makeField('Date article appeared on DYK', $dykDate),
-            makeField('Date of GA promotion', $gaDate),
-            makeField('Date of FA promotion', $faDate),
-            makeField('Number of previous 4As', $previous4As),
-            makeField('Optional custom message', $customMessage)
-        );
-
-        $declinedFields.append(
-            makeField('Reason for decline', $declineReason)
-        ).hide();
-
-        function refreshMode() {
-            var isApproved = $mode.val() === 'approved';
-            $approvedFields.toggle(isApproved);
-            $declinedFields.toggle(!isApproved);
-        }
-        $mode.on('change', refreshMode);
-
-        $body.append(
-            $requirementsNote,
-            makeField('Result', $mode),
-            makeField('Nominator', $nominator),
-            makeField('Article', $article),
-            $articleHistoryNotice,
-            $approvedFields,
-            $declinedFields,
-            $status
-        );
-
-        var dialog = new OO.ui.MessageDialog();
-        var windowManager = new OO.ui.WindowManager();
-        $('body').append(windowManager.$element);
-        windowManager.addWindows([dialog]);
-
-        async function preload() {
-            try {
-                $articleHistoryNotice.text('Loading article metadata…');
-
-                var article = $article.val().trim();
-                var oldest = await getOldestNonRedirectRevision(article);
-                if (oldest) {
-                    $creationDate.val(oldest.timestamp.slice(0, 10));
-                    $creationDiffHolder.empty().append(linkNode(oldest.url, 'oldest non-redirect revision'));
-                } else {
-                    $creationDiffHolder.text('No non-redirect revision found automatically.');
-                }
-
-                var history = await getArticleHistoryData(article);
-                $dykDate.val(history.dykDate);
-                $gaDate.val(history.gaDate);
-                $faDate.val(history.faDate);
-                $articleHistoryNotice.empty().append(
-                    $('<span>').text('Found {{Article history}} on '),
-                    linkNode(mw.util.getUrl(history.talkTitle), history.talkTitle)
-                );
-
-                var count = await getExistingRecordCount(parsed.nominator);
-                $previous4As.val(String(count));
-            } catch (e) {
-                $articleHistoryNotice.text(String(e.message || e));
-            }
-        }
-
-        windowManager.openWindow(dialog, {
-            title: 'Four Award helper — ' + parsed.article,
-            message: $body,
-            actions: [
-                { action: 'cancel', label: 'Cancel', flags: 'safe' },
-                { action: 'submit', label: 'Run', flags: ['primary', 'progressive'] }
-            ],
-            size: 'larger'
-        }).closed.then(function (data) {
-            if (!data || data.action !== 'submit') {
-                return;
-            }
-
-            (async function () {
-                try {
-                    var payload = {
-                        nominator: $nominator.val().trim(),
-                        article: $article.val().trim(),
-                        awardDate: $awardDate.val().trim(),
-                        creationDate: $creationDate.val().trim(),
-                        dykDate: $dykDate.val().trim(),
-                        gaDate: $gaDate.val().trim(),
-                        faDate: $faDate.val().trim(),
-                        previous4As: Number($previous4As.val().trim() || '0'),
-                        customMessage: $customMessage.val(),
-                        declineReason: $declineReason.val(),
-                        articleTalkPage: talkPageTitleForArticle($article.val().trim())
-                    };
-
-                    if (!payload.nominator || !payload.article) {
-                        throw new Error('Nominator and article are required.');
-                    }
-
-                    if ($mode.val() === 'approved') {
-                        if (!payload.creationDate || !payload.dykDate || !payload.gaDate || !payload.faDate || !payload.awardDate) {
-                            throw new Error('All approved fields must be filled in before continuing.');
-                        }
-                        await processApproved(payload, ui, { rawText: nomination.text });
-                    } else {
-                        if (!payload.declineReason.trim()) {
-                            throw new Error('A decline reason is required.');
-                        }
-                        await processDeclined(payload, ui, { rawText: nomination.text });
-                    }
-                } catch (err) {
-                    showMessage($status, String(err.message || err), 'error');
-                    mw.notify(String(err.message || err), { type: 'error' });
-                }
-            }());
-        });
-
-        refreshMode();
-        preload();
+    if (!parsed.nominator || !parsed.article) {
+        mw.notify('Could not parse nomination header and/or article line.', { type: 'error' });
+        return;
     }
 
-   function addLinksToRenderedNominations() {
-        var $content = $('#mw-content-text .mw-parser-output');
+    // --- Extract DOM links ---
+    var $contentBlock = $header.closest('.mw-heading4').nextUntil('.mw-heading4');
 
-        // Find nomination headers (user links in bold at start of each nom)
-        $content.find('p > b > a').each(function () {
-            var $userLink = $(this);
-            var href = $userLink.attr('href') || '';
-            var $p = $userLink.closest('p');
-            var paragraphText = $p.text(); // Only use the nomination header line, not article/talk/history links
-            if (!/\/wiki\/User:/i.test(href) || !/\(talk\s*·\s*contribs\)/i.test(paragraphText)) {
-                    return;
-            	  }
+    var links = {
+        dyk: null,
+        ga: null,
+        fa: null,
+        creation: null
+    };
 
-            // Avoid adding twice
-            if ($userLink.next('.four-award-helper-link').length) {
-                return;
+    $contentBlock.find('a').each(function () {
+        var href = $(this).attr('href') || '';
+
+        if (/Did_you_know_archive/i.test(href)) {
+            links.dyk = href;
+        } else if (/\/GA\d+/i.test(href)) {
+            links.ga = href;
+        } else if (/Featured_article_candidates/i.test(href)) {
+            links.fa = href;
+        } else if (/diff=/i.test(href)) {
+            links.creation = href;
+        }
+    });
+
+    // --- Parse DYK date from URL ---
+function parseDykDate(url) {
+    if (!url) return '';
+
+    var match = url.match(/Did_you_know_archive\/(\d{4})\/([A-Za-z]+)#(\d{1,2})_[A-Za-z]+_\d{4}/i);
+    if (!match) return '';
+
+    var year = match[1];
+    var monthName = match[2];
+    var day = match[3];
+
+    var date = new Date(monthName + ' ' + day + ', ' + year);
+    return isNaN(date) ? '' : date.toISOString().slice(0, 10);
+}
+    // --- Fetch history data (GA/FA/DYK fallback) ---
+    var history = await getArticleHistoryData(parsed.article).catch(() => null);
+
+    // --- Fetch creation date ---
+    async function getCreationDateSafe(article) {
+        try {
+            var rev = await getOldestNonRedirectRevision(article);
+            return rev ? dateFromMwTimestamp(rev.timestamp) : '';
+        } catch {
+            return '';
+        }
+    }
+
+    var dykDate = links.dyk
+        ? parseDykDate(links.dyk)
+        : (history?.dykDate || '');
+
+    var gaDate = history?.gaDate || '';
+    var faDate = history?.faDate || '';
+    var creationDate = await getCreationDateSafe(parsed.article);
+
+    mw.loader.load('codex-styles');
+
+    var dialog = document.createElement('dialog');
+    dialog.className = 'cdx-dialog-backdrop';
+
+    dialog.innerHTML = `
+        <div class="cdx-dialog">
+            <header class="cdx-dialog__header">
+                <h2 class="cdx-dialog__title">Four Award helper — ${parsed.article}</h2>
+            </header>
+            <div class="cdx-dialog__body">
+                <div class="cdx-message cdx-message--warning">
+                    Reminder: this script does not verify eligibility. You must confirm criteria manually.
+                </div>
+
+                <label class="cdx-label">Result</label>
+                <select id="mode" class="cdx-select">
+                    <option value="approved">Approved</option>
+                    <option value="declined">Declined</option>
+                </select>
+
+                ${makeInput('Nominator', 'nominator', parsed.nominator)}
+                ${makeInput('Article', 'article', parsed.article)}
+                ${makeInput('Award date', 'awardDate', currentDateYMD())}
+                ${makeInput('Creation date', 'creationDate', creationDate)}
+                ${makeInput('DYK date', 'dykDate', dykDate)}
+                ${makeInput('GA date', 'gaDate', gaDate)}
+                ${makeInput('FA date', 'faDate', faDate)}
+                ${makeInput('Previous 4As', 'previous4As', '0')}
+
+                <label class="cdx-label">Custom message</label>
+                <textarea id="customMessage" class="cdx-text-input__input"></textarea>
+
+                <label class="cdx-label">Decline reason</label>
+                <textarea id="declineReason" class="cdx-text-input__input"></textarea>
+
+                <div id="status"></div>
+            </div>
+
+            <footer class="cdx-dialog__footer">
+                <button id="cancelBtn" class="cdx-button">Cancel</button>
+                <button id="runBtn" class="cdx-button cdx-button--action-progressive">Run</button>
+            </footer>
+        </div>
+    `;
+
+    document.body.appendChild(dialog);
+    dialog.showModal();
+
+    function val(id) {
+        return dialog.querySelector('#' + id).value.trim();
+    }
+
+    dialog.querySelector('#cancelBtn').onclick = () => dialog.remove();
+
+    dialog.querySelector('#runBtn').onclick = async () => {
+        try {
+            var payload = {
+                nominator: val('nominator'),
+                article: val('article'),
+                awardDate: val('awardDate'),
+                creationDate: val('creationDate'),
+                dykDate: val('dykDate'),
+                gaDate: val('gaDate'),
+                faDate: val('faDate'),
+                previous4As: Number(val('previous4As') || 0),
+                customMessage: val('customMessage'),
+                declineReason: val('declineReason'),
+                articleTalkPage: talkPageTitleForArticle(val('article'))
+            };
+
+            if (!payload.nominator || !payload.article) {
+                throw new Error('Nominator and article required.');
             }
 
-            var username = $userLink.text().trim();
-            var $articleLink = $p.nextAll('p').find('a').filter(function () {
-    return !$(this).attr('href').includes('User:') &&
-           !$(this).attr('href').includes('Talk:') &&
-           !$(this).attr('href').includes('Special:');}).first();
-           var articleFromDOM = $articleLink.text().trim();
+            if (dialog.querySelector('#mode').value === 'approved') {
+                await processApproved(payload, { statusBox: $('#status') }, { rawText: nominationText });
+            } else {
+                await processDeclined(payload, { statusBox: $('#status') }, { rawText: nominationText });
+            }
 
-            var $link = $('<a>')
-                .attr('href', '#')
-                .addClass('four-award-helper-link')
-                .css({ marginLeft: '0.5em', fontSize: '0.9em' })
-                .text('[4A helper]');
+            dialog.remove();
+        } catch (err) {
+            mw.notify(err.message, { type: 'error' });
+        }
+    };
+}
+    async function addLinksToRenderedNominations() {
+    var $content = $('#mw-content-text');
 
-            $link.on('click', async function (e) {
-                e.preventDefault();
-                try {
-                    var fullText = await getPageWikitext(MAIN_PAGE);
-                    var noms = CTBextractNominationsFromSection(fullText);
+    var fullText = await getPageWikitext(MAIN_PAGE);
+    var noms = CTBextractNominationsFromSection(fullText);
 
-                    var targetNom = null;
+	var $headers = $content.find('.mw-heading4 > h4');   
+	mw.notify('Headers found: ' + $headers.length, { type: 'info', autoHide: true });
 
-                    for (var i = 0; i < noms.length; i++) {
-                        var parsed = ctbParseNominationText(noms[i].text);
-                        if (parsed.nominator === username &&parsed.article === articleFromDOM) {
-                            targetNom = noms[i];
-                            break;
-                        }
-                    }
-
-                    if (!targetNom) {
-                        throw new Error('Could not match this nomination to source wikitext.');
-                    }
-
-                    await openDialogForNomination(targetNom);
-                } catch (err) {
-                    mw.notify(String(err.message || err), { type: 'error' });
-                }
-            });
-
-            $userLink.after($link);
-        });
+    if (!$headers.length) {
+    return;
+    	
     }
+
+    $headers.each(function () {
+    var $header = $(this);
+var username = decodeURIComponent($header.attr('id') || '')
+        .split('_(')[0]
+        .replace(/_/g, ' ')
+        .trim();
+    var usernameNorm = normalizeUser(username);
+
+	var nomination = noms.find(n => {
+	  var parsed = ctbParseNominationText(n);
+    	return normalizeUser(parsed.nominator) === usernameNorm;
+});
+console.log({
+    dom: username,
+    parsed: noms.map(n => ctbParseNominationText(n))
+
+});
+
+    if ($header.find('.four-award-helper-link').length) {
+        return;
+    }
+
+    var $helper = $('<a>')
+        .attr('href', '#')
+        .addClass('four-award-helper-link')
+        .css({ marginLeft: '0.5em', fontSize: '0.9em' })
+        .text('[4A helper]');
+
+    $helper.on('click', function (e) {
+        e.preventDefault();
+
+        if (!nomination) {
+            mw.notify('Could not match this nomination.', { type: 'error' });
+            return;
+        }
+
+        openDialogForNomination(nomination, $header);
+    });
+
+    $header.append(
+        $('<span>').css({ marginLeft: '0.5em' }).append($helper)
+    );
+});
+}
 
     function init() {
-        mw.loader.using([
-            'mediawiki.api',
-            'mediawiki.util',
-            'oojs-ui',
-            'oojs-ui.styles.icons-editing-core'
-        ]).then(function () {
-            addLinksToRenderedNominations();
-            mw.notify('Four Award helper loaded.', { type: 'info', autoHide: true });
-        });
-    }
+    mw.loader.using([
+        'mediawiki.api',
+        'mediawiki.util'
+    ]).then(async function () {
+        await addLinksToRenderedNominations();
+        mw.notify('Four Award helper loaded.', { type: 'info', autoHide: true });
+        
+    });
+}
 
     $(init);
 }());
