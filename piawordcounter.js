@@ -17,6 +17,7 @@
 
 	var PIA_TALK_LIMIT = 1000;
 	var AE_LIMIT = 500;
+	var MIN_TALK_COMMENTS = 1;
 	var SCRIPT_ID = 'pia-word-counter';
 	var NOTICE_RE = /This page is currently subject to the contentious topics procedure.*Arab-Israeli conflict/i;
 	var PIA_CATEGORY_RE = /Arab-Israeli conflict/i;
@@ -63,7 +64,8 @@
 			return {
 				name: 'pia-talk',
 				label: 'PIA word limit',
-				limit: PIA_TALK_LIMIT
+				limit: PIA_TALK_LIMIT,
+				threads: mw.config.get( 'wgDiscussionToolsPageThreads' ) || []
 			};
 		}
 
@@ -153,14 +155,19 @@
 		var re = /^(={2,6})\s*(.*?)\s*\1\s*$/gm;
 		var match;
 		var end;
+		var topLevelIndex = -1;
 
 		while ( ( match = re.exec( wikicode ) ) !== null ) {
+			if ( match[ 1 ].length === 2 ) {
+				topLevelIndex++;
+			}
 			matches.push( {
 				start: match.index,
 				endOfHeading: re.lastIndex,
 				level: match[ 1 ].length,
 				rawHeading: match[ 0 ],
-				heading: stripHeadingMarkup( match[ 0 ] )
+				heading: stripHeadingMarkup( match[ 0 ] ),
+				topLevelIndex: match[ 1 ].length === 2 ? topLevelIndex : null
 			} );
 		}
 
@@ -177,22 +184,60 @@
 				level: section.level,
 				heading: section.heading,
 				rawHeading: section.rawHeading,
+				topLevelIndex: section.topLevelIndex,
 				wikicode: wikicode.slice( section.start, end )
 			};
 		} );
 	}
 
-	function isFormalDiscussion( section, context ) {
+	function flattenComments( replies ) {
+		var comments = [];
+		( replies || [] ).forEach( function ( reply ) {
+			if ( reply.type === 'comment' ) {
+				comments.push( reply );
+			}
+			comments = comments.concat( flattenComments( reply.replies ) );
+		} );
+		return comments;
+	}
+
+	function getThreadForSection( section, context ) {
+		if ( context.name !== 'pia-talk' || section.topLevelIndex === null ) {
+			return null;
+		}
+		return context.threads[ section.topLevelIndex ] || null;
+	}
+
+	function getHeadingElementForSection( section, context, thread, fallbackHeadings ) {
+		var threadHeading;
+		var wrapper;
+
+		if ( context.name === 'pia-talk' && thread && thread.id ) {
+			threadHeading = document.getElementById( thread.id );
+			if ( threadHeading ) {
+				wrapper = $( threadHeading ).closest( '.mw-heading' )[ 0 ];
+				return wrapper || $( threadHeading ).closest( 'h1, h2, h3, h4, h5, h6' )[ 0 ] || threadHeading;
+			}
+		}
+
+		return fallbackHeadings[ section.headingIndex ];
+	}
+
+	function isFormalDiscussion( section, context, thread ) {
 		var firstChunk = section.wikicode.slice( 0, 1400 );
 
 		if ( context.name === 'ae' ) {
 			return AE_DISCUSSION_RE.test( section.rawHeading || '' ) || AE_DISCUSSION_RE.test( section.wikicode );
 		}
 
-		return section.level === 2 || FORMAL_DISCUSSION_RE.test( firstChunk );
+		if ( section.level !== 2 ) {
+			return FORMAL_DISCUSSION_RE.test( firstChunk );
+		}
+
+		return FORMAL_DISCUSSION_RE.test( firstChunk ) || flattenComments( thread && thread.replies ).length >= MIN_TALK_COMMENTS;
 	}
 
-	function extractLastSigner( text ) {
+	function extractLastSigner( text, allowUserTemplates ) {
 		var match;
 		var last = '';
 
@@ -201,9 +246,11 @@
 			last = match[ 1 ];
 		}
 
-		USER_TEMPLATE_RE.lastIndex = 0;
-		while ( ( match = USER_TEMPLATE_RE.exec( text ) ) !== null ) {
-			last = match[ 1 ];
+		if ( allowUserTemplates ) {
+			USER_TEMPLATE_RE.lastIndex = 0;
+			while ( ( match = USER_TEMPLATE_RE.exec( text ) ) !== null ) {
+				last = match[ 1 ];
+			}
 		}
 
 		return normalizeUser( last );
@@ -229,6 +276,7 @@
 			.replace( /<[^>]+>/g, ' ' )
 			.replace( /^={2,6}.*={2,6}$/gm, ' ' )
 			.replace( /\[\[(?:File|Image|Category):[^\]]+\]\]/gi, ' ' )
+			.replace( /\[\[\s*(?:User(?: talk)?|Special:Contribs|Special:Contributions)[:/ ][^\]]+\]\]/ig, ' ' )
 			.replace( /\[\[[^|\]]+\|([^\]]+)\]\]/g, '$1' )
 			.replace( /\[\[:?([^\]|]+)(?:\|[^\]]+)?\]\]/g, '$1' )
 			.replace( /\[https?:\/\/[^\s\]]+\s+([^\]]+)\]/g, '$1' )
@@ -244,7 +292,55 @@
 		return words ? words.length : 0;
 	}
 
-	function countSectionByUser( sectionWikicode ) {
+	function formatDiscussionToolsTimestamp( timestamp ) {
+		var months = [
+			'',
+			'January',
+			'February',
+			'March',
+			'April',
+			'May',
+			'June',
+			'July',
+			'August',
+			'September',
+			'October',
+			'November',
+			'December'
+		];
+		var year = timestamp.slice( 0, 4 );
+		var month = Number( timestamp.slice( 4, 6 ) );
+		var day = Number( timestamp.slice( 6, 8 ) );
+		var hour = timestamp.slice( 8, 10 );
+		var minute = timestamp.slice( 10, 12 );
+		return hour + ':' + minute + ', ' + day + ' ' + months[ month ] + ' ' + year + ' (UTC)';
+	}
+
+	function countSectionWithThread( sectionWikicode, thread ) {
+		var counts = {};
+		var comments = flattenComments( thread && thread.replies );
+		var cursor = 0;
+		var usedMetadata = 0;
+
+		comments.forEach( function ( comment ) {
+			var timestamp = formatDiscussionToolsTimestamp( comment.timestamp );
+			var end = sectionWikicode.indexOf( timestamp, cursor );
+			var chunk;
+
+			if ( end === -1 ) {
+				return;
+			}
+
+			chunk = sectionWikicode.slice( cursor, end );
+			cursor = end + timestamp.length;
+			counts[ comment.author ] = ( counts[ comment.author ] || 0 ) + countWords( chunk );
+			usedMetadata++;
+		} );
+
+		return usedMetadata ? counts : null;
+	}
+
+	function countSectionByUser( sectionWikicode, allowUserTemplates ) {
 		var counts = {};
 		var buffer = '';
 
@@ -257,7 +353,7 @@
 			}
 			TIMESTAMP_RE.lastIndex = 0;
 
-			var user = extractLastSigner( buffer );
+			var user = extractLastSigner( buffer, allowUserTemplates );
 			if ( user ) {
 				counts[ user ] = ( counts[ user ] || 0 ) + countWords( buffer );
 			}
@@ -280,8 +376,9 @@
 		return classes.join( ' ' );
 	}
 
-	function renderCounter( section, context ) {
-		var counts = countSectionByUser( section.wikicode );
+	function renderCounter( section, context, thread ) {
+		var counts = countSectionWithThread( section.wikicode, thread ) ||
+			countSectionByUser( section.wikicode, context.name === 'ae' );
 		var rows = Object.keys( counts )
 			.map( function ( user ) {
 				return { user: user, words: counts[ user ] };
@@ -327,14 +424,15 @@
 	function insertCounters( sections, context ) {
 		var headings = getHeadingElements();
 		sections.forEach( function ( section ) {
-			var heading = headings[ section.headingIndex ];
+			var thread = getThreadForSection( section, context );
+			var heading = getHeadingElementForSection( section, context, thread, headings );
 			var html;
 
-			if ( !heading || !isFormalDiscussion( section, context ) ) {
+			if ( !heading || !isFormalDiscussion( section, context, thread ) ) {
 				return;
 			}
 
-			html = renderCounter( section, context );
+			html = renderCounter( section, context, thread );
 			if ( html ) {
 				$( heading ).after( html );
 			}
