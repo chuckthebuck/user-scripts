@@ -19,6 +19,7 @@
 	var AE_LIMIT = 500;
 	var SCRIPT_ID = 'pia-word-counter';
 	var NOTICE_RE = /This page is currently subject to the contentious topics procedure.*Arab-Israeli conflict/i;
+	var PIA_CATEGORY_RE = /Arab-Israeli conflict/i;
 	var FORMAL_DISCUSSION_RE = /\{\{\s*(?:subst:\s*)?(?:rfc|requested move|requested move\/dated|requested move\/dated2|requested move\/dated multi|requested move\/dated multi\/sandbox)\b|^={2,6}\s*(?:rfc|request for comment|requested move|rm)\b/i;
 	var AE_DISCUSSION_RE = /^={3,4}\s*(?:Request concerning|Statement by)\b/i;
 	var TIMESTAMP_RE = /\d{1,2}:\d{2}, \d{1,2} [A-Z][a-z]+ \d{4} \(UTC\)/g;
@@ -31,6 +32,13 @@
 
 	function isAEPage() {
 		return /^Wikipedia:Arbitration\/Requests\/Enforcement(?:\/Archive\d+)?$/i.test( mw.config.get( 'wgPageName' ) || '' );
+	}
+
+	function isPIATalkPage() {
+		var categories = mw.config.get( 'wgCategories' ) || [];
+		return NOTICE_RE.test( document.body.textContent || '' ) || categories.some( function ( category ) {
+			return PIA_CATEGORY_RE.test( category );
+		} );
 	}
 
 	function getContext() {
@@ -51,7 +59,7 @@
 			return null;
 		}
 
-		if ( NOTICE_RE.test( document.body.textContent || '' ) ) {
+		if ( isPIATalkPage() ) {
 			return {
 				name: 'pia-talk',
 				label: 'PIA word limit',
@@ -181,7 +189,7 @@
 			return AE_DISCUSSION_RE.test( section.rawHeading || '' ) || AE_DISCUSSION_RE.test( section.wikicode );
 		}
 
-		return FORMAL_DISCUSSION_RE.test( firstChunk );
+		return section.level === 2 || FORMAL_DISCUSSION_RE.test( firstChunk );
 	}
 
 	function extractLastSigner( text ) {
