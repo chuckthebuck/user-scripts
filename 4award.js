@@ -67,6 +67,44 @@ function normalizeUser(u){
     return String(u||'').toLowerCase().replace(/_/g,' ').trim();
 }
 
+function getLinkTitle(link){
+    let $link=$(link);
+    let title=$link.attr('title');
+    if(title) return title;
+
+    let href=$link.attr('href') || '';
+    let m=href.match(/\/wiki\/([^?#]+)/);
+    return m ? decodeURIComponent(m[1]).replace(/_/g,' ') : '';
+}
+
+function isArticleTitle(title){
+    return title && !/^(Wikipedia|User|User talk|Talk|Special|File|Help|Template|Category):/i.test(title);
+}
+
+function firstArticleTitle(root){
+    let found='';
+    root.find('a[href*="/wiki/"]').each(function(){
+        let title=getLinkTitle(this);
+        if(isArticleTitle(title)){
+            found=title;
+            return false;
+        }
+    });
+    return found;
+}
+
+function firstHrefMatching(root, pattern){
+    let href='';
+    root.find('a[href]').each(function(){
+        let link=$(this).attr('href') || '';
+        if(pattern.test(link)){
+            href=link;
+            return false;
+        }
+    });
+    return href;
+}
+
 /* ================= API ================= */
 
 async function getWikitext(title){
@@ -260,9 +298,9 @@ function extractNomination(section){
 
     const h4 = section.is('h4') ? section : section.children('h4').first();
 
-    let userLink=h4.find('a[title^="User:"]').first();
-    let user=userLink.attr('title')
-        ? userLink.attr('title').replace(/^User:/,'').trim()
+    let userLink=h4.find('a[href*="/wiki/User:"], a[title^="User:"]').first();
+    let user=getLinkTitle(userLink)
+        ? getLinkTitle(userLink).replace(/^User:/,'').trim()
         : (h4.attr('id') || h4.find('.mw-headline').attr('id') || '')
             .replace(/_/g,' ')
             .replace(/\s*\(talk.*$/i,'')
@@ -281,19 +319,18 @@ function extractNomination(section){
         articleLine=content.find('b:contains("Article:")').first().parent();
     }
 
-    article=articleLine.find('a[href^="/wiki/"]:not([href*="Wikipedia:"]):not([href*="User:"]):not([href*="Special:"]):not([href*="Talk:"])')
-        .first().attr('title')||'';
+    article=firstArticleTitle(articleLine);
 
     if(!article){
-        article=content.find('a[href^="/wiki/"]:not([href*="Wikipedia:"]):not([href*="User:"]):not([href*="Special:"]):not([href*="Talk:"])')
-            .first().attr('title')||'';
+        article=firstArticleTitle(content);
     }
 
     return {
         user,
         article,
-        dyk:content.find('a[href*="Did_you_know"]').attr('href'),
-        fac:content.find('a[href*="Featured_article_candidates"]').attr('href')
+        dyk:firstHrefMatching(content,/Did_you_know/i),
+        ga:firstHrefMatching(content,/\/GA\d*($|[?#])/i),
+        fac:firstHrefMatching(content,/Featured_article_candidates/i)
     };
 }
 
