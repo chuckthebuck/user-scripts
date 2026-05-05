@@ -13,7 +13,38 @@
 (function () {
 'use strict';
 
-if (mw.config.get('wgPageName') !== 'Wikipedia:Four_Award') return;
+const DEBUG = true;
+const DEBUG_PREFIX = '[FourAwardHelper]';
+
+function debug(){
+    if(DEBUG && window.console){
+        console.log(DEBUG_PREFIX, ...arguments);
+    }
+}
+
+function warn(){
+    if(window.console){
+        console.warn(DEBUG_PREFIX, ...arguments);
+    }
+}
+
+function error(){
+    if(window.console){
+        console.error(DEBUG_PREFIX, ...arguments);
+    }
+}
+
+debug('loaded', {
+    pageName: mw.config.get('wgPageName'),
+    action: mw.config.get('wgAction'),
+    oldid: mw.config.get('wgRevisionId'),
+    url: location.href
+});
+
+if (mw.config.get('wgPageName') !== 'Wikipedia:Four_Award') {
+    debug('stopping: not Wikipedia:Four_Award');
+    return;
+}
 
 const RECORDS_PAGE = 'Wikipedia:Four Award/Records';
 const MAIN_PAGE = 'Wikipedia:Four Award';
@@ -24,8 +55,13 @@ let apiPromise;
 
 function getApi(){
     if(!apiPromise){
+        debug('loading mediawiki.api');
         apiPromise=mw.loader.using(['mediawiki.api']).then(function(){
+            debug('mediawiki.api loaded');
             return new mw.Api();
+        }).catch(function(e){
+            error('mediawiki.api failed to load', e);
+            throw e;
         });
     }
     return apiPromise;
@@ -33,15 +69,25 @@ function getApi(){
 
 function loadCodex(){
     if(!codexPromise){
+        debug('loading @wikimedia/codex');
         codexPromise=mw.loader.using(['@wikimedia/codex']).then(function(require){
             const Vue=require('vue');
             const Codex=require('@wikimedia/codex');
+            debug('@wikimedia/codex loaded', {
+                hasVue: !!Vue,
+                hasDialog: !!Codex.CdxDialog,
+                hasButton: !!Codex.CdxButton,
+                hasTextInput: !!Codex.CdxTextInput
+            });
             return {
                 Vue,
                 CdxDialog: Codex.CdxDialog,
                 CdxButton: Codex.CdxButton,
                 CdxTextInput: Codex.CdxTextInput
             };
+        }).catch(function(e){
+            error('@wikimedia/codex failed to load', e);
+            throw e;
         });
     }
     return codexPromise;
@@ -83,31 +129,38 @@ function isArticleTitle(title){
 
 function firstArticleTitle(root){
     let found='';
+    let count=0;
     root.find('a[href*="/wiki/"]').each(function(){
+        count++;
         let title=getLinkTitle(this);
         if(isArticleTitle(title)){
             found=title;
             return false;
         }
     });
+    debug('firstArticleTitle result', {found, candidateLinks: count, text: root.text().trim().slice(0,120)});
     return found;
 }
 
 function firstHrefMatching(root, pattern){
     let href='';
+    let count=0;
     root.find('a[href]').each(function(){
+        count++;
         let link=$(this).attr('href') || '';
         if(pattern.test(link)){
             href=link;
             return false;
         }
     });
+    debug('firstHrefMatching result', {pattern: String(pattern), href, candidateLinks: count});
     return href;
 }
 
 /* ================= API ================= */
 
 async function getWikitext(title){
+    debug('getWikitext start', title);
     let api=await getApi();
     let r = await api.get({
         action:'query',
@@ -121,6 +174,7 @@ async function getWikitext(title){
 }
 
 async function edit(title,text,summary){
+    debug('edit start', {title, summary, textLength: text.length});
     let api=await getApi();
     return api.postWithEditToken({
         action:'edit',
@@ -165,6 +219,7 @@ function insertRow(text,row){
 /* ================= DATES ================= */
 
 async function getCreationDate(article){
+    debug('getCreationDate start', article);
     let api=await getApi();
     let r=await api.get({
         action:'query',
@@ -184,6 +239,7 @@ function parseDYK(url){
 }
 
 async function parseGA(article){
+    debug('parseGA start', article);
     let api=await getApi();
     let r=await api.get({
         action:'query',
@@ -206,6 +262,7 @@ async function parseGA(article){
 }
 
 async function parseFAC(url,article){
+    debug('parseFAC start', {url, article});
     if(!url) return {date:'',status:''};
 
     try{
@@ -240,6 +297,7 @@ async function parseFAC(url,article){
 /* ================= ACTIONS ================= */
 
 async function notifyUser(user, article){
+    debug('notifyUser start', {user, article});
     let api=await getApi();
 
     var talkText = `
@@ -267,6 +325,7 @@ async function notifyUser(user, article){
 
 
 async function logAction(type,row){
+    debug('logAction start', {type, row});
     let api=await getApi();
     await api.postWithEditToken({
         action:'edit',
@@ -277,6 +336,15 @@ async function logAction(type,row){
 }
 
 async function approve(data){
+    debug('approve start', {
+        user:data.user,
+        article:data.article,
+        awardDate:data.awardDate,
+        creationDate:data.creationDate,
+        dykDate:data.dykDate,
+        gaDate:data.gaDate,
+        faDate:data.faDate
+    });
 
     let records=await getWikitext(RECORDS_PAGE);
 
@@ -295,6 +363,7 @@ async function approve(data){
 /* ================= PARSER ================= */
 
 function extractNomination(section){
+    debug('extractNomination start', section.get(0));
 
     const h4 = section.is('h4') ? section : section.children('h4').first();
 
@@ -325,17 +394,23 @@ function extractNomination(section){
         article=firstArticleTitle(content);
     }
 
-    return {
+    let data={
         user,
         article,
         dyk:firstHrefMatching(content,/Did_you_know/i),
         ga:firstHrefMatching(content,/\/GA\d*($|[?#])/i),
         fac:firstHrefMatching(content,/Featured_article_candidates/i)
     };
+    debug('extractNomination result', data);
+    return data;
 }
 
 function extractNominationFromArticleLine(articleLine){
     let p=$(articleLine);
+    debug('extractNominationFromArticleLine start', {
+        text: p.text().trim(),
+        element: articleLine
+    });
     let heading=p.prevAll('.mw-heading4, h4').first();
     let h4=heading.is('h4') ? heading : heading.find('h4').first();
     let content=p.add(p.nextUntil('.mw-heading4, h4'));
@@ -348,7 +423,7 @@ function extractNominationFromArticleLine(articleLine){
             .replace(/\s*\(talk.*$/i,'')
             .trim();
 
-    return {
+    let result={
         heading,
         h4,
         data:{
@@ -359,11 +434,19 @@ function extractNominationFromArticleLine(articleLine){
             fac:firstHrefMatching(content,/Featured_article_candidates/i)
         }
     };
+    debug('extractNominationFromArticleLine result', {
+        headingFound: !!heading.length,
+        h4Found: !!h4.length,
+        headingText: h4.text().trim(),
+        data: result.data
+    });
+    return result;
 }
 
 /* ================= UI ================= */
 
 async function openDialog(data){
+    debug('openDialog start', data);
 
     const mount=document.body.appendChild(document.createElement('div'));
     const { Vue, CdxDialog, CdxButton, CdxTextInput }=await loadCodex();
@@ -393,11 +476,29 @@ async function openDialog(data){
         },
 
         async mounted(){
-            this.creationDate=await getCreationDate(this.article);
-            this.dykDate=parseDYK(data.dyk);
-            this.gaDate=await parseGA(this.article);
-            let fac=await parseFAC(data.fac,this.article);
-            this.faDate=fac.date;
+            debug('dialog mounted', {
+                user:this.user,
+                article:this.article,
+                rawDyk:data.dyk,
+                rawGa:data.ga,
+                rawFac:data.fac
+            });
+            try{
+                this.creationDate=await getCreationDate(this.article);
+                this.dykDate=parseDYK(data.dyk);
+                this.gaDate=await parseGA(this.article);
+                let fac=await parseFAC(data.fac,this.article);
+                this.faDate=fac.date;
+                debug('dialog date population complete', {
+                    creationDate:this.creationDate,
+                    dykDate:this.dykDate,
+                    gaDate:this.gaDate,
+                    faDate:this.faDate
+                });
+            }catch(e){
+                error('dialog date population failed', e);
+                mw.notify('Four Award helper date lookup failed: ' + (e?.message || e), {type:'warn'});
+            }
         },
 
         methods:{
@@ -408,6 +509,7 @@ async function openDialog(data){
                     this.open=false;
                     mount.remove();
                 }catch(e){
+                    error('run failed', e);
                     mw.notify('Four Award helper failed: ' + (e?.error?.info || e?.message || e), {type:'error'});
                 }
             }
@@ -437,8 +539,17 @@ template:`
 /* ================= INIT ================= */
 
 function initFourAwardHelper($content){
+    debug('initFourAwardHelper start', {
+        contentLength: $content.length,
+        contentTextStart: $content.text().trim().slice(0,120),
+        currentLinks: $('.four-award-helper-link').length
+    });
     let articleLines=$content.find('.mw-parser-output p, p').filter(function(){
         return /^Article:\s*/i.test($(this).text().trim());
+    });
+    debug('article lines found', {
+        count: articleLines.length,
+        lines: articleLines.map(function(){ return $(this).text().trim().slice(0,160); }).get()
     });
 
     articleLines.each(function(){
@@ -447,10 +558,17 @@ function initFourAwardHelper($content){
         const data=parsed.data;
         const h4=parsed.h4;
 
-        if(!h4.length || h4.find('.four-award-helper-link').length) return;
+        if(!h4.length){
+            warn('skipping article line: no heading found', {data, line: $(this).text().trim()});
+            return;
+        }
+        if(h4.find('.four-award-helper-link').length){
+            debug('skipping article line: link already present', h4.text().trim());
+            return;
+        }
 
         if(!data.user || !data.article){
-            mw.log.warn('FourAwardHelper found a nomination but could not extract all data', data, h4.text());
+            warn('found a nomination but could not extract all data', data, h4.text());
         }
 
         const btn=$('<a href="#" class="four-award-helper-link"> [4A]</a>');
@@ -459,17 +577,22 @@ function initFourAwardHelper($content){
             try{
                 await openDialog(data);
             }catch(err){
+                error('openDialog failed', err);
                 mw.notify('Four Award helper failed to open: ' + (err?.message || err), {type:'error'});
-                mw.log.error(err);
             }
         });
 
         h4.append(btn);
+        debug('appended [4A]', {heading: h4.text().trim(), data});
+    });
+    debug('initFourAwardHelper done', {
+        finalLinks: $('.four-award-helper-link').length
     });
 }
 
 mw.hook('wikipage.content').add(initFourAwardHelper);
 $(function(){
+    debug('DOM ready callback');
     initFourAwardHelper($('#mw-content-text'));
 });
 });
