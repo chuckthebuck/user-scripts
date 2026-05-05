@@ -19,13 +19,24 @@ const RECORDS_PAGE = 'Wikipedia:Four Award/Records';
 const MAIN_PAGE = 'Wikipedia:Four Award';
 const LOG_PAGE = 'User:' + mw.config.get('wgUserName') + '/4award/log';
 
-mw.loader.using(['@wikimedia/codex']).then(function (require) {
-
-const Vue = require('vue');
-const Codex = require('@wikimedia/codex');
-
-const { CdxDialog, CdxButton, CdxTextInput } = Codex;
 const api = new mw.Api();
+let codexPromise;
+
+function loadCodex(){
+    if(!codexPromise){
+        codexPromise=mw.loader.using(['@wikimedia/codex']).then(function(require){
+            const Vue=require('vue');
+            const Codex=require('@wikimedia/codex');
+            return {
+                Vue,
+                CdxDialog: Codex.CdxDialog,
+                CdxButton: Codex.CdxButton,
+                CdxTextInput: Codex.CdxTextInput
+            };
+        });
+    }
+    return codexPromise;
+}
 
 /* ================= UTIL ================= */
 function withTag(summary){
@@ -272,12 +283,17 @@ function extractNomination(section){
 
 /* ================= UI ================= */
 
-function openDialog(data){
+async function openDialog(data){
 
     const mount=document.body.appendChild(document.createElement('div'));
+    const { Vue, CdxDialog, CdxButton, CdxTextInput }=await loadCodex();
 
     Vue.createMwApp({
-        components:{CdxDialog,CdxButton,CdxTextInput},
+        components:{
+            'cdx-dialog': CdxDialog,
+            'cdx-button': CdxButton,
+            'cdx-text-input': CdxTextInput
+        },
 
         data(){
             return{
@@ -318,52 +334,64 @@ function openDialog(data){
         },
 
 template:`
-<CdxDialog v-model:open="open" title="Four Award">
+<cdx-dialog v-model:open="open" title="Four Award">
 
-<CdxTextInput v-model="user" disabled/>
-<CdxTextInput v-model="article" disabled/>
+<cdx-text-input v-model="user"></cdx-text-input>
+<cdx-text-input v-model="article"></cdx-text-input>
 
-<CdxTextInput v-model="awardDate"/>
-<CdxTextInput v-model="creationDate"/>
-<CdxTextInput v-model="dykDate"/>
-<CdxTextInput v-model="gaDate"/>
-<CdxTextInput v-model="faDate"/>
+<cdx-text-input v-model="awardDate"></cdx-text-input>
+<cdx-text-input v-model="creationDate"></cdx-text-input>
+<cdx-text-input v-model="dykDate"></cdx-text-input>
+<cdx-text-input v-model="gaDate"></cdx-text-input>
+<cdx-text-input v-model="faDate"></cdx-text-input>
 
 <pre>{{preview}}</pre>
 
-<CdxButton @click="run" action="progressive">Run</CdxButton>
+<cdx-button @click="run" action="progressive">Run</cdx-button>
 
-</CdxDialog>
+</cdx-dialog>
 `
     }).mount(mount);
 }
 
 /* ================= INIT ================= */
 
-let nominationSections=$('#mw-content-text .mw-parser-output > .mw-heading4');
-if(!nominationSections.length){
-    nominationSections=$('#mw-content-text .mw-parser-output > h4');
-}
-
-nominationSections.each(function(){
-
-    const section=$(this);
-    const data=extractNomination(section);
-    const h4=section.is('h4') ? section : section.children('h4').first();
-
-    if(!data.user || !data.article || !h4.length){
-        mw.log.warn('FourAwardHelper skipped heading; could not extract nomination data', data, h4.text());
-        return;
+function initFourAwardHelper($content){
+    let nominationSections=$content.find('.mw-parser-output > .mw-heading4, .mw-parser-output > h4');
+    if(!nominationSections.length){
+        nominationSections=$content.find('.mw-heading4, h4');
     }
 
-    const btn=$('<a href="#"> [4A]</a>');
-    btn.click(e=>{
-        e.preventDefault();
-        openDialog(data);
+    nominationSections.each(function(){
+
+        const section=$(this);
+        const data=extractNomination(section);
+        const h4=section.is('h4') ? section : section.children('h4').first();
+
+        if(!h4.length || h4.find('.four-award-helper-link').length) return;
+        if(!data.article && !section.nextUntil('h4, .mw-heading4').text().includes('Article:')) return;
+
+        if(!data.user || !data.article){
+            mw.log.warn('FourAwardHelper found a nomination but could not extract all data', data, h4.text());
+        }
+
+        const btn=$('<a href="#" class="four-award-helper-link"> [4A]</a>');
+        btn.click(async e=>{
+            e.preventDefault();
+            try{
+                await openDialog(data);
+            }catch(err){
+                mw.notify('Four Award helper failed to open: ' + (err?.message || err), {type:'error'});
+                mw.log.error(err);
+            }
+        });
+
+        h4.append(btn);
     });
+}
 
-    h4.append(btn);
-});
-
+mw.hook('wikipage.content').add(initFourAwardHelper);
+$(function(){
+    initFourAwardHelper($('#mw-content-text'));
 });
 });
