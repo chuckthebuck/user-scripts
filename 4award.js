@@ -231,17 +231,19 @@ async function approve(data){
 
 function extractNomination(section){
 
-    const h4 = section.children('h4');
+    const h4 = section.is('h4') ? section : section.children('h4').first();
 
     let userLink=h4.find('a[title^="User:"]').first();
     let user=userLink.attr('title')
         ? userLink.attr('title').replace(/^User:/,'').trim()
-        : (h4.attr('id')||'')
+        : (h4.attr('id') || h4.find('.mw-headline').attr('id') || '')
             .replace(/_/g,' ')
             .replace(/\s*\(talk.*$/i,'')
             .trim();
 
-    let content=section.nextUntil('.mw-heading4');
+    let content=section.is('h4')
+        ? section.nextUntil('h4')
+        : section.nextUntil('.mw-heading4');
 
     let article=content.find('b:contains("Article:")')
         .first()
@@ -332,11 +334,18 @@ template:`
 
 /* ================= INIT ================= */
 
-$('#mw-content-text .mw-heading4').each(function(){
+let nominationSections=$('#mw-content-text .mw-parser-output > .mw-heading4');
+if(!nominationSections.length){
+    nominationSections=$('#mw-content-text .mw-parser-output > h4');
+}
+
+nominationSections.each(function(){
 
     const section=$(this);
     const data=extractNomination(section);
-    const h4=section.children('h4');
+    const h4=section.is('h4') ? section : section.children('h4').first();
+
+    if(!data.user || !data.article || !h4.length) return;
 
     const btn=$('<a href="#"> [4A]</a>');
     btn.click(e=>{
