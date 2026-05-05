@@ -245,11 +245,17 @@ function extractNomination(section){
         ? section.nextUntil('h4')
         : section.nextUntil('.mw-heading4');
 
-    let article=content.find('b:contains("Article:")')
-        .first()
-        .nextAll('a[href^="/wiki/"]:not([href*="Wikipedia:"]):not([href*="User:"]):not([href*="Special:"])')
-        .first()
-        .attr('title')||'';
+    let article='';
+    let articleLine=content.filter(function(){
+        return $(this).text().includes('Article:');
+    }).first();
+
+    if(!articleLine.length){
+        articleLine=content.find('b:contains("Article:")').first().parent();
+    }
+
+    article=articleLine.find('a[href^="/wiki/"]:not([href*="Wikipedia:"]):not([href*="User:"]):not([href*="Special:"]):not([href*="Talk:"])')
+        .first().attr('title')||'';
 
     if(!article){
         article=content.find('a[href^="/wiki/"]:not([href*="Wikipedia:"]):not([href*="User:"]):not([href*="Special:"]):not([href*="Talk:"])')
@@ -345,7 +351,10 @@ nominationSections.each(function(){
     const data=extractNomination(section);
     const h4=section.is('h4') ? section : section.children('h4').first();
 
-    if(!data.user || !data.article || !h4.length) return;
+    if(!data.user || !data.article || !h4.length){
+        mw.log.warn('FourAwardHelper skipped heading; could not extract nomination data', data, h4.text());
+        return;
+    }
 
     const btn=$('<a href="#"> [4A]</a>');
     btn.click(e=>{
