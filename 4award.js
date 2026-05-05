@@ -595,4 +595,4 @@ $(function(){
     debug('DOM ready callback');
     initFourAwardHelper($('#mw-content-text'));
 });
-});
+})();
