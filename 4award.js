@@ -19,8 +19,17 @@ const RECORDS_PAGE = 'Wikipedia:Four Award/Records';
 const MAIN_PAGE = 'Wikipedia:Four Award';
 const LOG_PAGE = 'User:' + mw.config.get('wgUserName') + '/4award/log';
 
-const api = new mw.Api();
 let codexPromise;
+let apiPromise;
+
+function getApi(){
+    if(!apiPromise){
+        apiPromise=mw.loader.using(['mediawiki.api']).then(function(){
+            return new mw.Api();
+        });
+    }
+    return apiPromise;
+}
 
 function loadCodex(){
     if(!codexPromise){
@@ -61,6 +70,7 @@ function normalizeUser(u){
 /* ================= API ================= */
 
 async function getWikitext(title){
+    let api=await getApi();
     let r = await api.get({
         action:'query',
         prop:'revisions',
@@ -73,6 +83,7 @@ async function getWikitext(title){
 }
 
 async function edit(title,text,summary){
+    let api=await getApi();
     return api.postWithEditToken({
         action:'edit',
         title,
@@ -116,6 +127,7 @@ function insertRow(text,row){
 /* ================= DATES ================= */
 
 async function getCreationDate(article){
+    let api=await getApi();
     let r=await api.get({
         action:'query',
         prop:'revisions',
@@ -134,6 +146,7 @@ function parseDYK(url){
 }
 
 async function parseGA(article){
+    let api=await getApi();
     let r=await api.get({
         action:'query',
         prop:'revisions',
@@ -158,6 +171,7 @@ async function parseFAC(url,article){
     if(!url) return {date:'',status:''};
 
     try{
+        let api=await getApi();
         let title=url.includes('title=')
             ? decodeURIComponent(url.match(/title=([^&]+)/)[1])
             : decodeURIComponent(url.split('/wiki/')[1]);
@@ -188,6 +202,7 @@ async function parseFAC(url,article){
 /* ================= ACTIONS ================= */
 
 async function notifyUser(user, article){
+    let api=await getApi();
 
     var talkText = `
 {| style="border: 1px solid gray; background-color: #fdffe7;"
@@ -214,6 +229,7 @@ async function notifyUser(user, article){
 
 
 async function logAction(type,row){
+    let api=await getApi();
     await api.postWithEditToken({
         action:'edit',
         title:LOG_PAGE,
@@ -366,10 +382,13 @@ function initFourAwardHelper($content){
 
         const section=$(this);
         const data=extractNomination(section);
-        const h4=section.is('h4') ? section : section.children('h4').first();
+        const h4=section.is('h4') ? section : section.find('h4').first();
 
         if(!h4.length || h4.find('.four-award-helper-link').length) return;
-        if(!data.article && !section.nextUntil('h4, .mw-heading4').text().includes('Article:')) return;
+
+        const sectionText=section.nextUntil('h4, .mw-heading4').text();
+        const looksLikeNomination=data.article || /Article:/i.test(sectionText) || /\(talk\s*\|\s*contribs\)/i.test(h4.text());
+        if(!looksLikeNomination) return;
 
         if(!data.user || !data.article){
             mw.log.warn('FourAwardHelper found a nomination but could not extract all data', data, h4.text());
