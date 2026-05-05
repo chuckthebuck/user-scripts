@@ -24,7 +24,7 @@ mw.loader.using(['@wikimedia/codex']).then(function (require) {
 const Vue = require('vue');
 const Codex = require('@wikimedia/codex');
 
-const { CdxDialog, CdxButton, CdxTextInput, CdxSelect } = Codex;
+const { CdxDialog, CdxButton, CdxTextInput } = Codex;
 const api = new mw.Api();
 
 /* ================= UTIL ================= */
@@ -178,15 +178,15 @@ async function parseFAC(url,article){
 
 async function notifyUser(user, article){
 
-    var talkText = '
+    var talkText = `
 {| style="border: 1px solid gray; background-color: #fdffe7;"
 |rowspan="2" style="vertical-align:middle;" | 
 [[File:Four Award with draft icon.svg|100px]]
 |rowspan="2" |
 |style="font-size: x-large; padding: 0; vertical-align: middle; height: 1.1em;" | '''Four Award'''
 |-
-|style="vertical-align: middle; border-top: 1px solid gray;" | Congratulations! You have been awarded the [[Wikipedia:Four Award|Four Award]] for your work from beginning to end on '''[[' + article + ']]'''. <span style="font-family:Courier">All the Best</span> -- [[User:Alachuckthebuck|<b style="color: #605252">Chuck</b>]] <b><sup>[[User_talk:Alachuckthebuck|<span style="color: #8c593a; font-family: Tahoma">Talk</span>]]</sup></b> 00:39, 2 April 2026 (UTC) 
-|}';
+|style="vertical-align: middle; border-top: 1px solid gray;" | Congratulations! You have been awarded the [[Wikipedia:Four Award|Four Award]] for your work from beginning to end on '''[[${article}]]'''. <span style="font-family:Courier">All the Best</span> -- [[User:Alachuckthebuck|<b style="color: #605252">Chuck</b>]] <b><sup>[[User_talk:Alachuckthebuck|<span style="color: #8c593a; font-family: Tahoma">Talk</span>]]</sup></b> 00:39, 2 April 2026 (UTC) 
+|}`;
     var talkSectionTitle = 'Four Award for ' + article;
 
     await api.postWithEditToken({
@@ -231,17 +231,28 @@ async function approve(data){
 
 function extractNomination(section){
 
-    const h4 = section.children('h4'); // FIXED
+    const h4 = section.children('h4');
 
-    let user=(h4.attr('id')||'')
-        .replace(/_/g,' ')
-        .replace(/\s*\(.*$/,'')
-        .trim();
+    let userLink=h4.find('a[title^="User:"]').first();
+    let user=userLink.attr('title')
+        ? userLink.attr('title').replace(/^User:/,'').trim()
+        : (h4.attr('id')||'')
+            .replace(/_/g,' ')
+            .replace(/\s*\(talk.*$/i,'')
+            .trim();
 
     let content=section.nextUntil('.mw-heading4');
 
-    let article=content.find('a[href^="/wiki/"]:not([href*="Wikipedia:"])')
-        .first().attr('title')||'';
+    let article=content.find('b:contains("Article:")')
+        .first()
+        .nextAll('a[href^="/wiki/"]:not([href*="Wikipedia:"]):not([href*="User:"]):not([href*="Special:"])')
+        .first()
+        .attr('title')||'';
+
+    if(!article){
+        article=content.find('a[href^="/wiki/"]:not([href*="Wikipedia:"]):not([href*="User:"]):not([href*="Special:"]):not([href*="Talk:"])')
+            .first().attr('title')||'';
+    }
 
     return {
         user,
@@ -258,7 +269,7 @@ function openDialog(data){
     const mount=document.body.appendChild(document.createElement('div'));
 
     Vue.createMwApp({
-        components:{CdxDialog,CdxButton,CdxTextInput,CdxSelect},
+        components:{CdxDialog,CdxButton,CdxTextInput},
 
         data(){
             return{
@@ -287,10 +298,14 @@ function openDialog(data){
 
         methods:{
             async run(){
-                await approve(this);
-                mw.notify('Done');
-                this.open=false;
-                mount.remove();
+                try{
+                    await approve(this);
+                    mw.notify('Done');
+                    this.open=false;
+                    mount.remove();
+                }catch(e){
+                    mw.notify('Four Award helper failed: ' + (e?.error?.info || e?.message || e), {type:'error'});
+                }
             }
         },
 
