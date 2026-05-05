@@ -334,6 +334,33 @@ function extractNomination(section){
     };
 }
 
+function extractNominationFromArticleLine(articleLine){
+    let p=$(articleLine);
+    let heading=p.prevAll('.mw-heading4, h4').first();
+    let h4=heading.is('h4') ? heading : heading.find('h4').first();
+    let content=p.add(p.nextUntil('.mw-heading4, h4'));
+
+    let userLink=h4.find('a[href*="/wiki/User:"], a[title^="User:"]').first();
+    let user=getLinkTitle(userLink)
+        ? getLinkTitle(userLink).replace(/^User:/,'').trim()
+        : (h4.attr('id') || h4.find('.mw-headline').attr('id') || '')
+            .replace(/_/g,' ')
+            .replace(/\s*\(talk.*$/i,'')
+            .trim();
+
+    return {
+        heading,
+        h4,
+        data:{
+            user,
+            article:firstArticleTitle(p),
+            dyk:firstHrefMatching(content,/Did_you_know/i),
+            ga:firstHrefMatching(content,/\/GA\d*($|[?#])/i),
+            fac:firstHrefMatching(content,/Featured_article_candidates/i)
+        }
+    };
+}
+
 /* ================= UI ================= */
 
 async function openDialog(data){
@@ -410,22 +437,17 @@ template:`
 /* ================= INIT ================= */
 
 function initFourAwardHelper($content){
-    let nominationSections=$content.find('.mw-parser-output > .mw-heading4, .mw-parser-output > h4');
-    if(!nominationSections.length){
-        nominationSections=$content.find('.mw-heading4, h4');
-    }
+    let articleLines=$content.find('.mw-parser-output p, p').filter(function(){
+        return /^Article:\s*/i.test($(this).text().trim());
+    });
 
-    nominationSections.each(function(){
+    articleLines.each(function(){
 
-        const section=$(this);
-        const data=extractNomination(section);
-        const h4=section.is('h4') ? section : section.find('h4').first();
+        const parsed=extractNominationFromArticleLine(this);
+        const data=parsed.data;
+        const h4=parsed.h4;
 
         if(!h4.length || h4.find('.four-award-helper-link').length) return;
-
-        const sectionText=section.nextUntil('h4, .mw-heading4').text();
-        const looksLikeNomination=data.article || /Article:/i.test(sectionText) || /\(talk\s*\|\s*contribs\)/i.test(h4.text());
-        if(!looksLikeNomination) return;
 
         if(!data.user || !data.article){
             mw.log.warn('FourAwardHelper found a nomination but could not extract all data', data, h4.text());
